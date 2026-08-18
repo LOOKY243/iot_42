@@ -69,7 +69,16 @@ else
 fi
 
 echo "Waiting for the cluster to be ready..."
-until kubectl cluster-info &> /dev/null; do
+for i in $(seq 1 60); do
+    if kubectl cluster-info &> /dev/null; then
+        break
+    fi
+    if [[ $i -eq 60 ]]; then
+        echo "The cluster did not become reachable in time."
+        k3d cluster list
+        docker ps -a --filter name=k3d- --format '{{.Names}}	{{.Status}}'
+        exit 1
+    fi
     sleep 2
 done
 
