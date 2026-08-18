@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/Blankxx420/brguicho-iot.git'
+    repoURL: 'https://github.com/LOOKY243/iot_42.git'
     targetRevision: HEAD
     path: p3/k8s
   destination:
