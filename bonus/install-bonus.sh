@@ -73,9 +73,14 @@ MINIO_VALUES="$(mktemp)"
 cat > "$MINIO_VALUES" <<EOF
 fullnameOverride: gitlab-minio
 image:
-  repository: bitnami/minio
+  repository: bitnamilegacy/minio
   tag: latest
   pullPolicy: IfNotPresent
+console:
+  image:
+    repository: bitnamilegacy/minio-object-browser
+    tag: latest
+    pullPolicy: IfNotPresent
 auth:
   rootUser: gitlab
   rootPassword: "${MINIOPASS}"
@@ -140,7 +145,7 @@ helm upgrade --install gitlab gitlab/gitlab \
   --set global.appConfig.object_store.connection.secret=gitlab-object-storage \
   --set registry.storage.secret=gitlab-registry-storage \
   --set gitlab.toolbox.backups.objectStorage.config.secret=gitlab-backup-storage \
-  --wait --timeout 600s
+  --wait --timeout 2400s
 
 echo "Récupération du mot de passe administrateur GitLab..."
 for i in $(seq 1 60); do
