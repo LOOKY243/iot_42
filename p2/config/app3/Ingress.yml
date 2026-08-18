@@ -6,8 +6,7 @@ metadata:
     app: app3
 spec:
   rules:
-  - host: app3.com
-    http:
+  - http:
       paths:
       - path: /
         pathType: Prefix

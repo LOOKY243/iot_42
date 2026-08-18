@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 CLUSTER_CONFIG="${SCRIPT_DIR}/cluster.yml"
 APPLICATION_MANIFEST="${SCRIPT_DIR}/k8s/application.yml"
+GITLAB_PROJECT="iot-app"
+GITLAB_PORT="8929"
 
 if [[ ! -f "$CLUSTER_CONFIG" ]]; then
     echo "Cluster config not found: $CLUSTER_CONFIG"
@@ -153,16 +155,66 @@ done
 if ! kubectl get secret gitlab-gitlab-initial-root-password -n gitlab &> /dev/null; then
     echo "GitLab did not create the initial root secret in time."
     echo "Helm releases in gitlab namespace:"
-    helm list -n gitlab || true    kubectl get pods -n gitlab
+    helm list -n gitlab || true
     kubectl get events -n gitlab --sort-by=.metadata.creationTimestamp | tail -50
     echo "GitLab pods:"
     kubectl get pods -n gitlab || true
     exit 1
 fi
 
+ROOT_PASS=$(kubectl get secret gitlab-gitlab-initial-root-password -n gitlab -ojsonpath="{.data.password}" | base64 --decode)
+
 echo -n "Mot de passe root GitLab : "
-kubectl get secret gitlab-gitlab-initial-root-password -n gitlab -ojsonpath="{.data.password}" | base64 --decode
-echo ""
+echo "$ROOT_PASS"
+
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+kubectl create namespace dev --dry-run=client -o yaml | kubectl apply -f -
+
+if ! kubectl get deployment argocd-server -n argocd &> /dev/null; then
+    echo "Installation d'Argo CD..."
+    kubectl apply -n argocd --server-side --force-conflicts -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+else
+    echo "-> Argo CD is already installed."
+fi
+
+kubectl -n argocd wait --for=condition=available --timeout=600s deployment/argocd-server
+
+echo "Création du projet GitLab et envoi des manifests..."
+kubectl -n gitlab port-forward svc/gitlab-webservice-default "$GITLAB_PORT":8181 > /dev/null 2>&1 &
+PF_PID=$!
+trap 'kill "$PF_PID" 2> /dev/null || true' EXIT
+
+until curl -s -o /dev/null "http://localhost:$GITLAB_PORT/-/health"; do
+    sleep 5
+done
+
+TOKEN=$(curl -s -X POST "http://localhost:$GITLAB_PORT/oauth/token" \
+  -d grant_type=password \
+  -d username=root \
+  -d "password=$ROOT_PASS" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+
+if [[ -z "$TOKEN" ]]; then
+    echo "Could not obtain a GitLab API token for root."
+    exit 1
+fi
+
+curl -s -X POST "http://localhost:$GITLAB_PORT/api/v4/projects" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "name=$GITLAB_PROJECT" \
+  -d visibility=public > /dev/null
+
+rm -rf "/tmp/$GITLAB_PROJECT"
+mkdir -p "/tmp/$GITLAB_PROJECT/k8s"
+cp "${SCRIPT_DIR}/../p3/k8s/deployment.yml" "/tmp/$GITLAB_PROJECT/k8s/"
+cp "${SCRIPT_DIR}/../p3/k8s/service.yml" "/tmp/$GITLAB_PROJECT/k8s/"
+
+cd "/tmp/$GITLAB_PROJECT"
+git init -b main
+git add .
+git -c user.email=root@local.gitlab.com -c user.name=root commit -m "app v1"
+git remote add origin "http://root:$ROOT_PASS@localhost:$GITLAB_PORT/root/$GITLAB_PROJECT.git"
+git push -u origin main
+cd "$SCRIPT_DIR"
 
 if [[ ! -f "$APPLICATION_MANIFEST" ]]; then
     echo "Application manifest not found: $APPLICATION_MANIFEST"

@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 K3D_CONFIG="${PROJECT_ROOT}/config/k3d_config.yml"
+ARGOCD_APP="${PROJECT_ROOT}/config/argo_cd_application.yml"
 CLUSTER_NAME="iot-cluster"
 
 if ! command -v docker &> /dev/null; then
@@ -89,7 +90,20 @@ else
     echo "-> Argo CD is already installed."
 fi
 
+kubectl -n argocd wait --for=condition=available --timeout=600s deployment/argocd-server
+
+if [[ ! -f "$ARGOCD_APP" ]]; then
+    echo "Argo CD application manifest not found: $ARGOCD_APP"
+    exit 1
+fi
+
+kubectl apply -f "$ARGOCD_APP"
+
 echo "Infrastructure ready!"
+
+echo -n "Argo CD admin password: "
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+echo ""
 
 echo "Starting port-forward (Ctrl+C to stop)..."
 kubectl port-forward svc/argocd-server -n argocd 8080:443

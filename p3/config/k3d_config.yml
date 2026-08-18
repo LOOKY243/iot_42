@@ -3,6 +3,6 @@ kind: Simple
 metadata:
   name: iot-cluster
 ports:
-  - port: 8888:80
+  - port: 8888:30080
     nodeFilters:
       - loadbalancer

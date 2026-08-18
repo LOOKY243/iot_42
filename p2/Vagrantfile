@@ -1,15 +1,18 @@
 Vagrant.configure("2") do |config|
-    config.vm.box = "generic/alpine318"
-    config.vm.hostname = "brguichoS"
-    config.vm.network "private_network", ip: "192.168.56.110"
-    config.vm.provision "shell", name: "cgroup setup", path: "scripts/cgroup-setup.sh"
-    config.vm.provision :reload
-    config.vm.provision "shell", name: "K3s server", path: "scripts/k3s-controler.sh"
-    config.vm.synced_folder ".", "/vagrant"
-    config.vm.provider "virtualbox" do |vb|
-        vb.name = "brguicho"
-        vb.memory = "2048"
-        vb.cpus = 1
-        vb.gui = false
+    config.vm.box = "generic/alpine319"
+    config.vm.define "brguichoS" do |brguichoS|
+        brguichoS.vm.hostname = "brguichoS"
+        brguichoS.vm.network "private_network", ip: "192.168.56.110"
+        brguichoS.vm.provision "shell", name: "cgroup setup", path: "scripts/cgroup-setup.sh"
+        brguichoS.vm.provision :reload
+        brguichoS.vm.provision "shell", name: "K3s server", path: "scripts/k3s-controler.sh"
+        brguichoS.vm.synced_folder ".", "/vagrant"
+        brguichoS.vm.provider "virtualbox" do |vb|
+            vb.name = "brguichoS"
+            vb.memory = "2048"
+            vb.cpus = 1
+            vb.gui = false
+        end
     end
-end 
+end
+ 
