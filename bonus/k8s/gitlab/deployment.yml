@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gitlab
+  namespace: gitlab
+  labels:
+    app: gitlab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gitlab
+  template:
+    metadata:
+      labels:
+        app: gitlab
+    spec:
+      containers:
+        - name: gitlab
+          image: gitlab/gitlab-ce:latest
+          ports:
+            - containerPort: 80
+            - containerPort: 443
+          env:
+            - name: GITLAB_OMNIBUS_CONFIG
+              value: |
+                external_url 'http://gitlab.local'
+                registry['enable'] = false
+                gitlab_kas['enable'] = false
+                prometheus_monitoring['enable'] = false
+                puma['worker_processes'] = 0
+                sidekiq['max_concurrency'] = 5
+                postgresql['shared_buffers'] = "256MB"
+                postgresql['max_connections'] = 50
+            - name: GITLAB_ROOT_EMAIL
+              value: "root@gitlab.local"
+            - name: GITLAB_ROOT_PASSWORD
+              value: "__GITLAB_ROOT_PASSWORD__"
+          resources:
+            requests:
+              memory: "1500Mi"
+              cpu: "500m"
+            limits:
+              memory: "3Gi"
+          volumeMounts:
+            - name: gitlab-storage
+              mountPath: /var/opt/gitlab
+      volumes:
+        - name: gitlab-storage
+          persistentVolumeClaim:
+            claimName: gitlab-volume
