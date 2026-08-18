@@ -1,0 +1,111 @@
+==================================================
+IOT_42 - DEFENSE CHEAT SHEET
+==================================================
+
+--------------------------------------------------
+PART 1 - Vagrant + K3s (server + agent)
+--------------------------------------------------
+cd p1
+vagrant up
+vagrant ssh brguichoS
+vagrant ssh brguichoSW
+
+# on brguichoS:
+kubectl get nodes -o wide          # both nodes should show Ready
+ip a show $(ip route | grep default | awk '{print $5}')   # confirm IP .110 / .111
+
+--------------------------------------------------
+PART 2 - K3s + 3 apps + Ingress
+--------------------------------------------------
+cd p2
+vagrant up
+vagrant ssh brguichoS
+
+kubectl get nodes -o wide
+kubectl get all                    # 3 deployments, app2 has 3/3 replicas
+
+# host-based routing tests (MUST use "Host:" with the colon, not just -H "app1.com"):
+curl -H "Host: app1.com" http://192.168.56.110
+curl -H "Host: app2.com" http://192.168.56.110
+curl http://192.168.56.110          # no host match -> app3 (default backend)
+
+--------------------------------------------------
+PART 3 - K3d + Argo CD
+--------------------------------------------------
+cd p3
+bash scripts/install.sh
+
+kubectl get ns                                  # argocd + dev must exist
+kubectl get pods -n dev                         # the playground app pod
+kubectl get application -n argocd               # SYNC STATUS / HEALTH STATUS
+
+# Argo CD UI:
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+# login: admin / <password below>
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+# app itself (k3d loadbalancer -> nodePort 30080):
+curl http://localhost:8888/
+# expected: {"status":"ok", "message": "v1"}  (or "v2" after the update below)
+
+# force a resync if it didn't happen automatically:
+kubectl patch application playground-app -n argocd --type merge \
+  -p '{"metadata":{"annotations":{"argocd.argoproj.io/refresh":"hard"}}}'
+
+# v1 -> v2 update demo (the actual GitOps trigger):
+# 1. edit p3/k8s/deployment.yml: image: wil42/playground:v1 -> v2
+# 2. git add p3/k8s/deployment.yml && git commit -m "v2" && git push
+# 3. Argo CD auto-syncs (or force-refresh as above) -> new pod rolls out
+# 4. curl http://localhost:8888/ -> "message": "v2"
+
+--------------------------------------------------
+BONUS - Local Gitlab + Argo CD
+--------------------------------------------------
+bash bonus/install-bonus.sh
+# prints: GitLab URL, root username, root password (also saved to bonus/.gitlab_root_password)
+
+kubectl -n gitlab get pods                       # gitlab pod must be 1/1 Running
+kubectl -n gitlab port-forward svc/gitlab-service 8929:80
+# then open http://localhost:8929, OR via the Ingress:
+curl -H "Host: gitlab.local" http://localhost:8081/
+
+# IMPORTANT: when pointing Argo CD (or anything running INSIDE the cluster) at
+# GitLab, use the internal cluster-local Service DNS, NOT gitlab.local:
+#   http://gitlab-service.gitlab.svc.cluster.local/root/<project>.git
+# "gitlab.local" only resolves from OUTSIDE the cluster (your browser/host),
+# never from Argo CD's own repo-server pod -> DNS lookup fails ("server misbehaving").
+
+# clean slate if the root password ever stops matching what's printed
+# (happens if the cluster/PVC got reused across multiple installs):
+k3d cluster delete iot-bonus-cluster
+rm -f bonus/.gitlab_root_password
+bash bonus/install-bonus.sh
+
+--------------------------------------------------
+QUICK TROUBLESHOOTING
+--------------------------------------------------
+k3d cluster list                                 # which clusters exist
+kubectl config get-contexts                      # which cluster kubectl is pointed at
+kubectl config use-context k3d-iot-cluster        # switch to p3
+kubectl config use-context k3d-iot-bonus-cluster  # switch to bonus
+
+# curl -H needs "Name: Value" (with colon). curl -H "app2.com" does NOT set the
+# Host header - it's silently ignored, so you'll always hit the default app.
+
+--------------------------------------------------
+CONCEPTS TO BE ABLE TO EXPLAIN LIVE (correction sheet asks explicitly)
+--------------------------------------------------
+- K3s: lightweight Kubernetes distro, runs as a systemd service directly on a VM
+  (server = control plane + can run pods, agent = joins via token, runs pods only).
+- Vagrant: declarative VM provisioning tool; Vagrantfile describes VMs + how to
+  provision them (shell scripts here install K3s).
+- K3d: runs K3s INSIDE Docker containers instead of VMs - no Vagrant needed,
+  much lighter, used for Part 3 and bonus.
+- Namespace vs Pod: a namespace is a folder/partition inside one cluster (no
+  workload by itself); a pod is the actual running container(s), scoped to one
+  namespace. `kubectl get ns` lists folders, `kubectl get pods -n X` lists what's
+  actually running inside folder X.
+- CI / Argo CD (GitOps): Argo CD watches a git repo and continuously reconciles
+  the cluster's actual state to match what's declared in that repo. Push a
+  change -> Argo CD detects it -> auto-syncs -> cluster updates itself, no
+  manual kubectl apply needed.

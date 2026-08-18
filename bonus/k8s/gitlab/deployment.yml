@@ -41,7 +41,7 @@ spec:
               memory: "1500Mi"
               cpu: "500m"
             limits:
-              memory: "3Gi"
+              memory: "4Gi"
           volumeMounts:
             - name: gitlab-storage
               mountPath: /var/opt/gitlab

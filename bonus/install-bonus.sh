@@ -14,6 +14,7 @@ fi
 
 if ! k3d cluster list 2>/dev/null | grep -q "iot-bonus-cluster"; then
     echo "Creating the k3d bonus cluster..."
+    rm -f "${SCRIPT_DIR}/.gitlab_root_password"
     k3d cluster create --config "$CLUSTER_CONFIG"
 else
     echo "-> The k3d bonus cluster already exists."
@@ -28,15 +29,13 @@ echo "Installing GitLab (single lightweight pod, no Helm chart)..."
 kubectl apply -f "${K8S_DIR}/gitlab/namespace.yml"
 kubectl apply -f "${K8S_DIR}/gitlab/pvc.yml"
 
-# GitLab is pre-provisioned with a known root password via GITLAB_ROOT_PASSWORD
-# so the defense doesn't depend on scraping a generated secret. Minting an API
-# token automatically (OAuth password grant, gitlab-rails runner) turned out to
-# either be rejected by GitLab itself or heavy enough to compete with GitLab's
-# own Puma/Sidekiq for memory inside the same pod on a constrained host - so
-# that step is done once, by hand, from the printed instructions below. It also
-# matches what the correction sheet actually checks: the evaluator watches the
-# group create a repo and push to it live, not a script doing it beforehand.
-ROOT_PASS=$(openssl rand -hex 16)
+ROOT_PASS_FILE="${SCRIPT_DIR}/.gitlab_root_password"
+if [[ -f "$ROOT_PASS_FILE" ]]; then
+    ROOT_PASS="$(cat "$ROOT_PASS_FILE")"
+else
+    ROOT_PASS=$(openssl rand -hex 16)
+    echo "$ROOT_PASS" > "$ROOT_PASS_FILE"
+fi
 
 GITLAB_DEPLOYMENT="$(mktemp)"
 sed "s/__GITLAB_ROOT_PASSWORD__/${ROOT_PASS}/" "${K8S_DIR}/gitlab/deployment.yml" > "$GITLAB_DEPLOYMENT"
@@ -75,7 +74,6 @@ for i in $(seq 1 90); do
         kubectl -n gitlab get pods
         exit 1
     fi
-    # port-forward can drop under load; restart it if it did
     kill -0 "$PF_PID" 2>/dev/null || {
         kubectl -n gitlab port-forward svc/gitlab-service "$GITLAB_PORT":80 > /dev/null 2>&1 &
         PF_PID=$!
@@ -86,30 +84,6 @@ kill "$PF_PID" 2> /dev/null || true
 trap - EXIT
 
 cat <<EOF
-
-Bonus infrastructure ready!
-
-GitLab:
-  URL:      http://gitlab.local (via the Ingress) or run:
-              kubectl -n gitlab port-forward svc/gitlab-service $GITLAB_PORT:80
-            then open http://localhost:$GITLAB_PORT
   Username: root
   Password: $ROOT_PASS
-
-Remaining one-time setup (do this once, or live during the defense):
-  1. Log in to GitLab as root with the password above.
-  2. Create a new project named "iot-app" (visibility: public).
-  3. In GitLab: Settings -> Access Tokens, create a token with the
-     "api" and "write_repository" scopes.
-  4. Push Part 3's manifests into it:
-       mkdir -p /tmp/iot-app/k8s
-       cp ${SCRIPT_DIR}/../p3/k8s/deployment.yml ${SCRIPT_DIR}/../p3/k8s/service.yml /tmp/iot-app/k8s/
-       cd /tmp/iot-app
-       git init -b main
-       git add .
-       git commit -m "app v1"
-       git remote add origin http://root:<your-token>@localhost:$GITLAB_PORT/root/iot-app.git
-       git push -u origin main
-  5. Point Argo CD at it:
-       kubectl apply -f ${APPLICATION_MANIFEST}
 EOF
